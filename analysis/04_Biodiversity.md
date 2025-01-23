@@ -1,0 +1,520 @@
+---
+title: "BioDiversity"
+author: "Calla Bush St George"
+date: "2024-08-20"
+output:
+  html_document: 
+    code_folding: show
+    theme: spacelab
+    highlight: pygments
+    keep_md: yes
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+      toc_depth: 3
+  keep_md: true  
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```r
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.align = "center",
+                      fig.path = "../figures/04_Biodiversity/",
+                      dev = "png", dpi = 200) 
+
+# send any figure output to this folder 
+```
+
+# Setting the Environment 
+
+### Set my seed
+
+```r
+# Any number can be chose
+set.seed(567890)
+```
+
+## Load Libraries 
+
+```r
+pacman::p_load(tidyverse, devtools, patchwork, iNEXT, phyloseq,rstatix, ggpubr,
+               install = FALSE)
+```
+
+## Load in Data 
+
+```r
+load("data/02_PreProcessing/raw_preprocessed_physeq.RData")
+raw_preprocessed_physeq
+```
+
+```
+## phyloseq-class experiment-level object
+## otu_table()   OTU Table:         [ 30832 taxa and 83 samples ]
+## sample_data() Sample Data:       [ 83 samples by 17 sample variables ]
+## tax_table()   Taxonomy Table:    [ 30832 taxa by 9 taxonomic ranks ]
+```
+
+```r
+# Intuition Check 
+min(sample_sums(raw_preprocessed_physeq))
+```
+
+```
+## [1] 17528
+```
+
+```r
+# Setting colors for gut sections 
+host_species_colors <- c(
+  "Acanthurus nigros" = "dodgerblue4",
+  "Acanthurus achilles" = "#FF5733",
+  "Acanthurus nigrofuscus" = "olivedrab",
+  "Acanthurus olivaceus" = "purple4",
+  "Acanthurus triostegus" = "maroon2",
+  "Ctenochaetus striatus" = "yellow2",
+  "Naso brevirostris" = "red2",
+  "Naso lituratus" = "royalblue",
+  "Naso tonganus" = "salmon2",
+  "Odax pullus" = "springgreen2",
+  "Zebrasoma flavescens" = "mediumorchid",
+  "Zebrasoma scopas" = "magenta",
+  "Zebrasoma velifer" = "goldenrod")
+
+# Make metadata dataframe
+metadata_df <-
+  raw_preprocessed_physeq %>%
+  sample_data() %>%
+  data.frame()
+```
+
+
+
+# Goals
+
+1. Calculate the Hill Diversity of the samples. 
+2. Evaluate the rarefaction curves. 
+3. Evaluate the Diversity values. 
+4. Makes notes of specific samples and their seq depth. 
+
+# Diversity Calculations with iNEXT 
+
+
+```r
+# prepare input data 
+iNEXT_input_df <- 
+  raw_preprocessed_physeq %>%
+  otu_table() %>%
+  data.frame()
+# Quick check
+dim(iNEXT_input_df)
+```
+
+```
+## [1] 30832    83
+```
+
+```r
+# Run iNEXT: Calculate the Hill Numbers 
+# Note that: Species in ROWS, Samples in COLUMNS 
+# Remember to set the seed! 
+#iNEXT_data <- iNEXT(iNEXT_input_df, 
+ #                  q = c(0,1,2), datatype = "abundance")
+
+# Save the file
+#save(iNEXT_data, file = "data/04_Biodiversity/iNEXT_data.RData")
+```
+
+# Evaluate the Diversity! 
+
+```r
+load("data/04_Biodiversity/iNEXT_data.RData")
+str(iNEXT_data)
+```
+
+```
+## List of 3
+##  $ DataInfo:'data.frame':	83 obs. of  14 variables:
+##   ..$ Assemblage: chr [1:83] "A16" "A17" "A18" "AA1" ...
+##   ..$ n         : num [1:83] 81206 58967 50495 87794 69765 ...
+##   ..$ S.obs     : num [1:83] 600 932 1702 653 566 ...
+##   ..$ SC        : num [1:83] 1 1 0.999 1 1 ...
+##   ..$ f1        : num [1:83] 13 24 50 18 21 17 11 20 23 4 ...
+##   ..$ f2        : num [1:83] 70 177 211 73 57 105 41 55 74 18 ...
+##   ..$ f3        : num [1:83] 29 87 133 49 34 73 16 44 65 8 ...
+##   ..$ f4        : num [1:83] 39 61 102 29 28 43 30 28 33 9 ...
+##   ..$ f5        : num [1:83] 33 45 98 25 31 25 18 24 25 10 ...
+##   ..$ f6        : num [1:83] 30 30 75 21 19 34 15 20 21 11 ...
+##   ..$ f7        : num [1:83] 18 23 70 21 28 32 16 12 33 3 ...
+##   ..$ f8        : num [1:83] 13 27 65 16 21 21 10 23 31 7 ...
+##   ..$ f9        : num [1:83] 18 22 82 22 11 15 10 10 20 6 ...
+##   ..$ f10       : num [1:83] 17 27 59 18 16 14 6 12 11 4 ...
+##  $ iNextEst:List of 2
+##   ..$ size_based    :'data.frame':	9960 obs. of  10 variables:
+##   .. ..$ Assemblage: chr [1:9960] "A16" "A16" "A16" "A16" ...
+##   .. ..$ m         : num [1:9960] 1 4512 9023 13535 18046 ...
+##   .. ..$ Method    : chr [1:9960] "Rarefaction" "Rarefaction" "Rarefaction" "Rarefaction" ...
+##   .. ..$ Order.q   : num [1:9960] 0 0 0 0 0 0 0 0 0 0 ...
+##   .. ..$ qD        : num [1:9960] 1 318 407 458 492 ...
+##   .. ..$ qD.LCL    : num [1:9960] 1 314 402 453 486 ...
+##   .. ..$ qD.UCL    : num [1:9960] 1 322 413 464 498 ...
+##   .. ..$ SC        : num [1:9960] 0.194 0.972 0.986 0.991 0.994 ...
+##   .. ..$ SC.LCL    : num [1:9960] 0.192 0.971 0.985 0.991 0.994 ...
+##   .. ..$ SC.UCL    : num [1:9960] 0.196 0.972 0.986 0.991 0.994 ...
+##   ..$ coverage_based:'data.frame':	9960 obs. of  8 variables:
+##   .. ..$ Assemblage: chr [1:9960] "A16" "A16" "A16" "A16" ...
+##   .. ..$ SC        : num [1:9960] 0.194 0.972 0.986 0.991 0.994 ...
+##   .. ..$ m         : num [1:9960] 1 4512 9023 13535 18046 ...
+##   .. ..$ Method    : chr [1:9960] "Rarefaction" "Rarefaction" "Rarefaction" "Rarefaction" ...
+##   .. ..$ Order.q   : num [1:9960] 0 0 0 0 0 0 0 0 0 0 ...
+##   .. ..$ qD        : num [1:9960] 1 318 407 458 492 ...
+##   .. ..$ qD.LCL    : num [1:9960] 0.991 311.477 400.376 450.771 484.074 ...
+##   .. ..$ qD.UCL    : num [1:9960] 1.01 323.96 414.61 466.14 500.08 ...
+##  $ AsyEst  :'data.frame':	249 obs. of  7 variables:
+##   ..$ Assemblage: chr [1:249] "A16" "A16" "A16" "A17" ...
+##   ..$ Diversity : chr [1:249] "Species richness" "Shannon diversity" "Simpson diversity" "Species richness" ...
+##   ..$ Observed  : num [1:249] 600 23.54 5.16 932 124.05 ...
+##   ..$ Estimator : num [1:249] 601.21 23.63 5.16 933.63 125.07 ...
+##   ..$ s.e.      : num [1:249] 7.4096 0.2216 0.0353 11.8702 0.9559 ...
+##   ..$ LCL       : num [1:249] 600 23.19 5.09 932 123.19 ...
+##   ..$ UCL       : num [1:249] 615.73 24.06 5.23 956.89 126.94 ...
+##  - attr(*, "class")= chr "iNEXT"
+```
+
+```r
+typeof(iNEXT_data)
+```
+
+```
+## [1] "list"
+```
+
+# Plot Diversity 
+
+```r
+# Prepare Colors 
+color_df <- 
+  iNEXT_input_df %>%
+  colnames() %>%
+  data.frame()
+# Check
+head(color_df)
+```
+
+```
+##     .
+## 1 A16
+## 2 A17
+## 3 A18
+## 4 AA1
+## 5 AA2
+## 6 AA3
+```
+
+```r
+# Rename the column 
+colnames(color_df)[1] <- "names"
+# Check
+head(color_df)
+```
+
+```
+##   names
+## 1   A16
+## 2   A17
+## 3   A18
+## 4   AA1
+## 5   AA2
+## 6   AA3
+```
+
+```r
+# Make a helper dataframe for plotting with colors 
+iNEXT_color_df <- 
+  color_df %>%
+  # Fix the names for merging
+  mutate(names = gsub(names, pattern = "[.]", replace = "-"),
+         names = gsub(names, pattern = "X",  replace = "")) %>%
+  # Merge with metadata
+  left_join(metadata_df, by = "names") %>%
+   #Merge with colors for plotting with ggiNEXT
+  left_join(y=data.frame(host_species_colors = host_species_colors,
+            host_species = names(host_species_colors)),
+            by = "host_species")
+```
+
+# Plot Rarefaction with `ggiNEXT`
+
+
+```r
+# Plot rarefaction! 
+# rarefaction/extrapolation curve, type = 1 
+
+# Order q: 
+  # 0 = Richness/ Number of Total taxa
+  # 1 = Exponential Shannon / Number of "Common" taxa
+  # 2 = Inverse Simpson / Number of "Dominant" taxa 
+
+#ggiNEXT(iNEXT_data, type = 1, facet.var = "Order.q") + 
+#  facet_wrap(~Order.q, scales = "fixed") + 
+#  scale_color_manual(values = iNEXT_color_df$host_species_colors, guide = FALSE) + 
+ # scale_fill_manual(values = iNEXT_color_df$host_specie_colors, guide = FALSE) #+ 
+ # scale_shape_manual(values = base::rep(17, nsamples(raw_preprocessed_physeq)),
+   #                  guide = FALSE) +
+ # theme(legend.position = "none")
+```
+
+
+# Manually plot Diversity 
+
+## Rarefaction
+
+```r
+iNEXT_manual_df <- 
+  iNEXT_data$iNextEst$size_based %>%
+  dplyr::rename(names = Assemblage) %>%
+  # Fix the samples names 
+  mutate(names = gsub(names, pattern = "[.]", replace = "-"),
+         names = gsub(names, pattern = "X", replace = "")) %>%
+  # join with metadata 
+  left_join(., metadata_df, by = "names") %>%
+  # Add colors to data frame
+  left_join(., data.frame(host_species_colors = host_species_colors,
+                          host_species = names(host_species_colors)),
+            by = "host_species") 
+
+# Inspect 
+dim(iNEXT_manual_df)
+```
+
+```
+## [1] 9960   27
+```
+
+```r
+str(iNEXT_manual_df)
+```
+
+```
+## 'data.frame':	9960 obs. of  27 variables:
+##  $ names              : chr  "A16" "A16" "A16" "A16" ...
+##  $ m                  : num  1 4512 9023 13535 18046 ...
+##  $ Method             : chr  "Rarefaction" "Rarefaction" "Rarefaction" "Rarefaction" ...
+##  $ Order.q            : num  0 0 0 0 0 0 0 0 0 0 ...
+##  $ qD                 : num  1 318 407 458 492 ...
+##  $ qD.LCL             : num  1 314 402 453 486 ...
+##  $ qD.UCL             : num  1 322 413 464 498 ...
+##  $ SC                 : num  0.194 0.972 0.986 0.991 0.994 ...
+##  $ SC.LCL             : num  0.192 0.971 0.985 0.991 0.994 ...
+##  $ SC.UCL             : num  0.196 0.972 0.986 0.991 0.994 ...
+##  $ host_species       : chr  "Acanthurus nigros" "Acanthurus nigros" "Acanthurus nigros" "Acanthurus nigros" ...
+##  $ gut_section        : chr  "IV" "IV" "IV" "IV" ...
+##  $ region             : chr  "Cook Islands" "Cook Islands" "Cook Islands" "Cook Islands" ...
+##  $ location           : chr  "Mitiaro Island" "Mitiaro Island" "Mitiaro Island" "Mitiaro Island" ...
+##  $ diet               : chr  "herbivore" "herbivore" "herbivore" "herbivore" ...
+##  $ year               : int  NA NA NA NA NA NA NA NA NA NA ...
+##  $ month              : int  NA NA NA NA NA NA NA NA NA NA ...
+##  $ day                : int  NA NA NA NA NA NA NA NA NA NA ...
+##  $ sample_lab         : chr  "S521" "S521" "S521" "S521" ...
+##  $ input              : num  118795 118795 118795 118795 118795 ...
+##  $ filtered           : num  103721 103721 103721 103721 103721 ...
+##  $ denoisedF          : num  1e+05 1e+05 1e+05 1e+05 1e+05 ...
+##  $ denoisedR          : num  100800 100800 100800 100800 100800 ...
+##  $ merged             : num  93274 93274 93274 93274 93274 ...
+##  $ nochim             : num  82086 82086 82086 82086 82086 ...
+##  $ perc_reads_retained: num  69.1 69.1 69.1 69.1 69.1 ...
+##  $ host_species_colors: chr  "dodgerblue4" "dodgerblue4" "dodgerblue4" "dodgerblue4" ...
+```
+
+```r
+# Plot it - Rarefaction Curve 
+iNEXT_manual_df %>%
+  # Filter out rows that are calcaulted by rarefaction from iNEXT
+  dplyr::filter(Method == "Extrapolation") %>%
+  # Make the actual rarefaction plot with 
+  # the # of sequences on the x-axis and diversity on the y-axis
+  # You can choose to pick one diversity value or plot all three 
+  ggplot(aes(x = m, y= qD, color = host_species, group = names)) + 
+  # line 
+  geom_line() + 
+  #geom_point() + 
+  # Challenge: Facet with gut section
+  facet_grid(Order.q~host_species, scales = "fixed") + 
+  scale_color_manual(values = host_species_colors) + 
+  theme(legend.position = "bottom")
+```
+
+<img src="../figures/04_Biodiversity/iNEXT-manual-1.png" style="display: block; margin: auto;" />
+
+
+# Diversity vs Gut Section 
+
+
+```r
+iNEXT_manual_df %>%
+  dplyr::filter(Method == "Observed") %>%
+  ggplot(aes(x = host_species, y = qD)) + 
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  facet_wrap(.~Order.q, scales = "free") + 
+  geom_point(aes(color = host_species)) + 
+  stat_smooth() + 
+  labs(x = "Host species", y = "# of ASVs") + 
+  scale_color_manual(values = host_species_colors) + 
+  theme(legend.position = "bottom")
+```
+
+```
+## `geom_smooth()` using method = 'loess' and formula = 'y ~ x'
+```
+
+<img src="../figures/04_Biodiversity/div-vs--1.png" style="display: block; margin: auto;" />
+
+
+# Session Information 
+
+```r
+# Ensure reproducibility 
+devtools::session_info()
+```
+
+```
+## ─ Session info ───────────────────────────────────────────────────────────────
+##  setting  value
+##  version  R version 4.3.2 (2023-10-31)
+##  os       macOS Sonoma 14.6.1
+##  system   x86_64, darwin20
+##  ui       X11
+##  language (EN)
+##  collate  en_US.UTF-8
+##  ctype    en_US.UTF-8
+##  tz       America/New_York
+##  date     2024-08-20
+##  pandoc   3.1.11 @ /Applications/RStudio.app/Contents/Resources/app/quarto/bin/tools/x86_64/ (via rmarkdown)
+## 
+## ─ Packages ───────────────────────────────────────────────────────────────────
+##  package          * version    date (UTC) lib source
+##  abind              1.4-5      2016-07-21 [2] CRAN (R 4.3.0)
+##  ade4               1.7-22     2023-02-06 [2] CRAN (R 4.3.0)
+##  ape                5.7-1      2023-03-13 [2] CRAN (R 4.3.0)
+##  backports          1.4.1      2021-12-13 [2] CRAN (R 4.3.0)
+##  Biobase            2.62.0     2023-10-24 [2] Bioconductor
+##  BiocGenerics       0.48.1     2023-11-01 [2] Bioconductor
+##  biomformat         1.30.0     2023-10-24 [2] Bioconductor
+##  Biostrings         2.70.2     2024-01-28 [2] Bioconductor 3.18 (R 4.3.2)
+##  bitops             1.0-7      2021-04-24 [2] CRAN (R 4.3.0)
+##  broom              1.0.5      2023-06-09 [2] CRAN (R 4.3.0)
+##  bslib              0.6.1      2023-11-28 [2] CRAN (R 4.3.0)
+##  cachem             1.0.8      2023-05-01 [2] CRAN (R 4.3.0)
+##  car                3.1-2      2023-03-30 [1] CRAN (R 4.3.0)
+##  carData            3.0-5      2022-01-06 [1] CRAN (R 4.3.0)
+##  cli                3.6.2      2023-12-11 [2] CRAN (R 4.3.0)
+##  cluster            2.1.6      2023-12-01 [2] CRAN (R 4.3.0)
+##  codetools          0.2-19     2023-02-01 [2] CRAN (R 4.3.2)
+##  colorspace         2.1-0      2023-01-23 [2] CRAN (R 4.3.0)
+##  crayon             1.5.2      2022-09-29 [2] CRAN (R 4.3.0)
+##  data.table         1.15.0     2024-01-30 [2] CRAN (R 4.3.2)
+##  devtools         * 2.4.5      2022-10-11 [2] CRAN (R 4.3.0)
+##  digest             0.6.34     2024-01-11 [2] CRAN (R 4.3.0)
+##  dplyr            * 1.1.4      2023-11-17 [2] CRAN (R 4.3.0)
+##  ellipsis           0.3.2      2021-04-29 [2] CRAN (R 4.3.0)
+##  evaluate           0.23       2023-11-01 [2] CRAN (R 4.3.0)
+##  fansi              1.0.6      2023-12-08 [2] CRAN (R 4.3.0)
+##  farver             2.1.1      2022-07-06 [2] CRAN (R 4.3.0)
+##  fastmap            1.1.1      2023-02-24 [2] CRAN (R 4.3.0)
+##  forcats          * 1.0.0      2023-01-29 [2] CRAN (R 4.3.0)
+##  foreach            1.5.2      2022-02-02 [2] CRAN (R 4.3.0)
+##  fs                 1.6.3      2023-07-20 [2] CRAN (R 4.3.0)
+##  generics           0.1.3      2022-07-05 [2] CRAN (R 4.3.0)
+##  GenomeInfoDb       1.38.6     2024-02-08 [2] Bioconductor 3.18 (R 4.3.2)
+##  GenomeInfoDbData   1.2.11     2023-11-13 [2] Bioconductor
+##  ggplot2          * 3.4.4      2023-10-12 [1] CRAN (R 4.3.0)
+##  ggpubr           * 0.6.0.999  2024-07-30 [1] Github (kassambara/ggpubr@6aeb4f7)
+##  ggsignif           0.6.4      2022-10-13 [1] CRAN (R 4.3.0)
+##  glue               1.7.0      2024-01-09 [1] CRAN (R 4.3.0)
+##  gtable             0.3.4      2023-08-21 [2] CRAN (R 4.3.0)
+##  highr              0.10       2022-12-22 [2] CRAN (R 4.3.0)
+##  hms                1.1.3      2023-03-21 [2] CRAN (R 4.3.0)
+##  htmltools          0.5.7      2023-11-03 [2] CRAN (R 4.3.0)
+##  htmlwidgets        1.6.4      2023-12-06 [2] CRAN (R 4.3.0)
+##  httpuv             1.6.14     2024-01-26 [2] CRAN (R 4.3.2)
+##  igraph             2.0.1.1    2024-01-30 [2] CRAN (R 4.3.2)
+##  iNEXT            * 3.0.0      2022-08-29 [2] CRAN (R 4.3.0)
+##  IRanges            2.36.0     2023-10-24 [2] Bioconductor
+##  iterators          1.0.14     2022-02-05 [2] CRAN (R 4.3.0)
+##  jquerylib          0.1.4      2021-04-26 [2] CRAN (R 4.3.0)
+##  jsonlite           1.8.8      2023-12-04 [2] CRAN (R 4.3.0)
+##  knitr              1.45       2023-10-30 [2] CRAN (R 4.3.0)
+##  labeling           0.4.3      2023-08-29 [2] CRAN (R 4.3.0)
+##  later              1.3.2      2023-12-06 [2] CRAN (R 4.3.0)
+##  lattice            0.22-5     2023-10-24 [2] CRAN (R 4.3.0)
+##  lifecycle          1.0.4      2023-11-07 [2] CRAN (R 4.3.0)
+##  lubridate        * 1.9.3      2023-09-27 [2] CRAN (R 4.3.0)
+##  magrittr           2.0.3      2022-03-30 [2] CRAN (R 4.3.0)
+##  MASS               7.3-60.0.1 2024-01-13 [2] CRAN (R 4.3.0)
+##  Matrix             1.6-5      2024-01-11 [2] CRAN (R 4.3.0)
+##  memoise            2.0.1      2021-11-26 [2] CRAN (R 4.3.0)
+##  mgcv               1.9-1      2023-12-21 [2] CRAN (R 4.3.0)
+##  mime               0.12       2021-09-28 [2] CRAN (R 4.3.0)
+##  miniUI             0.1.1.1    2018-05-18 [2] CRAN (R 4.3.0)
+##  multtest           2.58.0     2023-10-24 [2] Bioconductor
+##  munsell            0.5.0      2018-06-12 [2] CRAN (R 4.3.0)
+##  nlme               3.1-164    2023-11-27 [2] CRAN (R 4.3.0)
+##  pacman             0.5.1      2019-03-11 [1] CRAN (R 4.3.0)
+##  patchwork        * 1.2.0.9000 2024-05-07 [1] Github (thomasp85/patchwork@d943757)
+##  permute            0.9-7      2022-01-27 [2] CRAN (R 4.3.0)
+##  phyloseq         * 1.46.0     2023-10-24 [2] Bioconductor
+##  pillar             1.9.0      2023-03-22 [2] CRAN (R 4.3.0)
+##  pkgbuild           1.4.3      2023-12-10 [2] CRAN (R 4.3.0)
+##  pkgconfig          2.0.3      2019-09-22 [2] CRAN (R 4.3.0)
+##  pkgload            1.3.4      2024-01-16 [2] CRAN (R 4.3.0)
+##  plyr               1.8.9      2023-10-02 [1] CRAN (R 4.3.0)
+##  profvis            0.3.8      2023-05-02 [2] CRAN (R 4.3.0)
+##  promises           1.2.1      2023-08-10 [2] CRAN (R 4.3.0)
+##  purrr            * 1.0.2      2023-08-10 [2] CRAN (R 4.3.0)
+##  R6                 2.5.1      2021-08-19 [2] CRAN (R 4.3.0)
+##  Rcpp               1.0.12     2024-01-09 [2] CRAN (R 4.3.0)
+##  RCurl              1.98-1.14  2024-01-09 [2] CRAN (R 4.3.0)
+##  readr            * 2.1.5      2024-01-10 [2] CRAN (R 4.3.0)
+##  remotes            2.4.2.1    2023-07-18 [2] CRAN (R 4.3.0)
+##  reshape2           1.4.4      2020-04-09 [2] CRAN (R 4.3.0)
+##  rhdf5              2.46.1     2023-11-29 [2] Bioconductor
+##  rhdf5filters       1.14.1     2023-11-06 [2] Bioconductor
+##  Rhdf5lib           1.24.2     2024-02-07 [2] Bioconductor 3.18 (R 4.3.2)
+##  rlang              1.1.3      2024-01-10 [2] CRAN (R 4.3.0)
+##  rmarkdown          2.25       2023-09-18 [2] CRAN (R 4.3.0)
+##  rstatix          * 0.7.2      2023-02-01 [1] CRAN (R 4.3.0)
+##  rstudioapi         0.15.0     2023-07-07 [2] CRAN (R 4.3.0)
+##  S4Vectors          0.40.2     2023-11-23 [2] Bioconductor
+##  sass               0.4.8      2023-12-06 [2] CRAN (R 4.3.0)
+##  scales             1.3.0      2023-11-28 [2] CRAN (R 4.3.0)
+##  sessioninfo        1.2.2      2021-12-06 [2] CRAN (R 4.3.0)
+##  shiny              1.8.0      2023-11-17 [2] CRAN (R 4.3.0)
+##  stringi            1.8.3      2023-12-11 [2] CRAN (R 4.3.0)
+##  stringr          * 1.5.1      2023-11-14 [2] CRAN (R 4.3.0)
+##  survival           3.5-7      2023-08-14 [2] CRAN (R 4.3.0)
+##  tibble           * 3.2.1      2023-03-20 [2] CRAN (R 4.3.0)
+##  tidyr            * 1.3.1      2024-01-24 [1] CRAN (R 4.3.2)
+##  tidyselect         1.2.0      2022-10-10 [2] CRAN (R 4.3.0)
+##  tidyverse        * 2.0.0      2023-02-22 [1] CRAN (R 4.3.0)
+##  timechange         0.3.0      2024-01-18 [2] CRAN (R 4.3.0)
+##  tzdb               0.4.0      2023-05-12 [2] CRAN (R 4.3.0)
+##  urlchecker         1.0.1      2021-11-30 [2] CRAN (R 4.3.0)
+##  usethis          * 2.2.2      2023-07-06 [2] CRAN (R 4.3.0)
+##  utf8               1.2.4      2023-10-22 [2] CRAN (R 4.3.0)
+##  vctrs              0.6.5      2023-12-01 [2] CRAN (R 4.3.0)
+##  vegan              2.6-4      2022-10-11 [1] CRAN (R 4.3.0)
+##  withr              3.0.0      2024-01-16 [2] CRAN (R 4.3.0)
+##  xfun               0.42       2024-02-08 [2] CRAN (R 4.3.2)
+##  xtable             1.8-4      2019-04-21 [2] CRAN (R 4.3.0)
+##  XVector            0.42.0     2023-10-24 [2] Bioconductor
+##  yaml               2.3.8      2023-12-11 [2] CRAN (R 4.3.0)
+##  zlibbioc           1.48.0     2023-10-24 [2] Bioconductor
+## 
+##  [1] /Users/cab565/Library/R/x86_64/4.3/library
+##  [2] /Library/Frameworks/R.framework/Versions/4.3-x86_64/Resources/library
+## 
+## ──────────────────────────────────────────────────────────────────────────────
+```

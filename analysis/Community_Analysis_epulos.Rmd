@@ -1,0 +1,502 @@
+---
+title: "Between sample/beta diversity of Microbes by gut section"
+author: "Calla Bush St George"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    code_folding: show
+    theme: spacelab
+    highlight: pygments
+    keep_md: no
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+      toc_depth: 3
+  keep_md: true  
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.align = "center",
+                      fig.path = "../figures/08_Community_Analysis/")
+```
+
+# Goals
+
+1. Load in phyloseq data with rooted tree.
+2. Evaluate sequencing depth and remove sample.
+3. Normalize the read counts between samples.
+4. Calculate community dissimilarities. Numbers between 0 and 1. If 0, completely similar versus if they are 1, then they are completely dissimilar. 
+    a. *Sorensen*: Presence/ Absence. Weighted by number of shared taxa. Shared species as a binary-valye. Abundance-unweighted. 
+    b. *Bray-Curtis*: Relative abundance. Weighted by number of shared taxa. Shared abundant species: abundance weighted. 
+    c. *(Abundance) Weighted UNIFRAC*: Consider abundant species and where they fall on the tree. 
+5. Visualize the community data with two unconstricted ordinations:
+    a. *PCoA*: Linear method. Uses matrix algebra to calculate eigenvalye. Calculate how much variation is explained by each axis.  Can choose to view axis 1, 2, 3, etc. and plot them together. 
+    b. *NMDS*: Non-linear method. Collapse multiple axes into two (or three) dimensions. Can see more axes of variation into fewer axes. Always need to report a stress value. (Ideally less than 0.15)
+6. Run statistics with PERMANOVA and betadispR.
+
+# Setup
+
+## Load Libraries
+```{r load-packages}
+# Install packages if needed
+
+pacman::p_load(tidyverse, devtools, phyloseq, patchwork, vegan, ggpubr, rstatix,
+               ggplot2,install = FALSE)
+```
+
+## Load in colors
+```{r load-colors}
+host_species_colors <- c(
+  "Acanthurus nigros" = "dodgerblue",
+  "Acanthurus achilles" = "royalblue",
+  "Acanthurus nigrofuscus" = "blue3",
+  "Acanthurus olivaceus" = "blue",
+  "Acanthurus triostegus" = "slateblue3",
+  "Ctenochaetus striatus" = "olivedrab",
+  "Naso brevirostris" = "red2",
+  "Naso lituratus" = "tomato4",
+  "Naso tonganus" = "salmon2",
+  "Naso unicornis" = "deeppink",
+  "Odax pullus" = "springgreen2",
+  "Zebrasoma flavescens" = "darkorange",
+  "Zebrasoma scopas" = "yellow2",
+  "Zebrasoma velifer" = "goldenrod")
+
+region_colors <- c(
+  "Cook Islands" = "olivedrab4",
+  "Hawaii" = "deeppink",
+  GBR = "royalblue3",
+  Captivity = "brown")
+
+gut_section_colors <- c(
+  III = "darkslateblue",
+  IV = "darkorchid1",
+  V = "cyan3",
+  feces = "cornflowerblue")
+
+diet_colors <- c(
+  herbivore = "forestgreen",
+  detritovore = "hotpink4",
+  omnivore = "orange")
+```
+
+
+## Load in data 
+```{r load-physeq}
+# Load in rooted phylogenetic tree!
+load("data/07_Phylogenetic_Tree_epulos/phytree_preprocessed_physeq.RData")
+unrooted_physeq
+midroot_physeq
+```
+
+# Explore Read Counts
+
+## Raw Read Depth
+```{r calculate-seq-depth}
+# Sequence depth will inform us on how we want to normalize our data
+# Calculate the total number of reads per sample
+raw_total_seqs_df <-
+  unrooted_physeq %>%
+  # Calculate the sample read sums
+  sample_sums() %>%
+  data.frame()
+
+# Name the column
+colnames(raw_total_seqs_df)[1] <- "TotalSeqs"
+
+head(raw_total_seqs_df)
+
+# Make a histogram of raw reads
+raw_seqs_histogram <-
+  raw_total_seqs_df %>%
+  ggplot(aes(x = TotalSeqs)) +
+  geom_histogram(bins = 50) +
+  scale_x_continuous(limits = c(0, 50000)) +
+  labs(title = "Raw Sequencing Depth Distribution") + 
+  theme_bw()
+
+```
+
+## Remove lowly sequenced sample
+
+## Normalize Read Counts
+```{r scale-reads}
+
+### scale_reads function and matround function
+#################################################################################### 
+# Function to scale reads: http://deneflab.github.io/MicrobeMiseq/ 
+# Scales reads by 
+# 1) taking proportions
+# 2) multiplying by a given library size of n
+# 3) rounding 
+# Default for n is the minimum sample size in your library
+# Default for round is floor
+
+matround <- function(x){trunc(x+0.5)}
+
+scale_reads <- function(physeq, n = min(sample_sums(physeq)), round = "round") {
+  
+  # transform counts to n
+  physeq.scale <- transform_sample_counts(physeq, function(x) {(n * x/sum(x))})
+  
+  # Pick the rounding functions
+  if (round == "floor"){
+    otu_table(physeq.scale) <- floor(otu_table(physeq.scale))
+  } else if (round == "round"){
+    otu_table(physeq.scale) <- round(otu_table(physeq.scale))
+  } else if (round == "matround"){
+    otu_table(physeq.scale) <- matround(otu_table(physeq.scale))
+  }
+  
+  # Prune taxa and return new phyloseq object
+  physeq.scale <- prune_taxa(taxa_sums(physeq.scale) > 0, physeq.scale)
+  return(physeq.scale)
+  
+  }
+
+```
+
+Rescale all reads so they all represent the count of the lowest number of sequence reads.
+We will expect each sample to have # of reads around 2200
+
+This is where one might decide to use rarefaction to normalize the data. 
+
+## Scale reads and check the distribution of the seq depth
+```{r scale-physeq}
+min(sample_sums(midroot_physeq))
+
+# Scale reads by the above function
+scaled_rooted_physeq <-
+  midroot_physeq %>%
+  scale_reads(round = "matround")
+
+# Calculate read depth
+## Look at total number of sequences in each sample and compare to what we had before
+
+scaled_total_seqs_df <- 
+  scaled_rooted_physeq %>%
+  sample_sums() %>%
+  data.frame()
+
+head(scaled_total_seqs_df)
+
+# Change first column name to be "TotalSeqs"
+colnames(scaled_total_seqs_df)[1] <- "TotalSeqs"
+
+# Inspect
+head(scaled_total_seqs_df)
+
+# Check range of data
+min_seqs <-
+  min(scaled_total_seqs_df)
+max_seqs <-
+ max(scaled_total_seqs_df)
+# Range of seqs
+max_seqs - min_seqs
+
+# Plot histogram
+scaled_total_seqs_df %>%
+  ggplot(aes(x = TotalSeqs)) +
+  geom_histogram(bins = 50) +
+  scale_x_continuous(limits = c(0, 600)) +
+  labs(title = "Scaled Sequencing Depth at 555") + 
+  theme_bw()
+
+head(scaled_total_seqs_df)
+
+```
+
+# Calculate & Visualize Community Dissimiliarity
+
+Exploratory analyses from the Paily & Shankar (2016) paper, which is using unconstrained ordination methods like PCoA. 
+
+## Sorenson PCoA
+```{r sorenson-pcoa}
+# Calculate sorenson dissimularity: Abundance-unweighted of shared taxa
+scaled_soren_pcoa <-  
+  ordinate(
+    physeq = scaled_rooted_physeq,
+    method = "PCoA",
+    distance = "bray", binary = TRUE)
+
+#str(scaled_soren_pcoa)
+
+# Plot the ordination host species
+soren_diet_pcoa <- plot_ordination(
+  physeq = scaled_rooted_physeq,
+  ordination = scaled_soren_pcoa,
+  color = "diet",
+  title = "Sorensen PCoA") +
+  geom_point(size=5, alpha = 0.5, aes(color = diet)) +
+  scale_color_manual(values = diet_colors) + 
+  theme_bw()
+# Show the plot 
+soren_diet_pcoa
+```
+
+
+
+
+## Bray-Curtis PCoA
+```{r bray-PCoA}
+# Calculate the BC distance
+scaled_BC_pcoa <- 
+  ordinate(
+    physeq = scaled_rooted_physeq,
+    method = "PCoA",
+    distance = "bray")
+
+# Plot the PCoA
+bray_diet_pcoa <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_BC_pcoa,
+    color = "diet",
+    title = "Bray-Curtis PCoA") +
+  geom_point(size=5, alpha = 0.5, aes(color = diet)) +
+  scale_color_manual(values = c(diet_colors)) + 
+  theme_bw()
+bray_diet_pcoa
+```
+
+
+
+## Weighted-Unifrac PCoA
+```{r wUnifrac-PCoA}
+# Calculate the BC distance
+scaled_wUNI_pcoa <- 
+  ordinate(
+    physeq = scaled_rooted_physeq,
+    method = "PCoA",
+    distance = "wunifrac")
+
+# Plot the PCoA
+wUNI_diet_pcoa <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_wUNI_pcoa,
+    color = "diet",
+    title = "Weighted Unifrac PCoA") +
+  geom_point(size=5, alpha = 0.5, aes(color = diet)) +
+  scale_color_manual(values = c(diet_colors)) + 
+  theme_bw()
+wUNI_diet_pcoa
+```
+
+
+## Combine PCoAs
+
+Let's plot all three together into one plot to have a concise visualization of the three metrics. 
+```{r pcoa-together, fig.width=8, fig.height=3.5}
+(soren_diet_pcoa + theme(legend.position = "none")) + 
+  (bray_diet_pcoa + theme(legend.position = "none")) + 
+    (wUNI_diet_pcoa + theme(legend.position = "none"))
+```
+
+## NMDS 
+
+### Weighted Unifrac
+
+Since we did 3 of the dissimilarity metrics for the PCoA, let's just plot one example of them for the NMDS plotting. Here, we will use weighted Unifrac 
+```{r wUnifrac-NMDS}
+# Calculate the Weighted Unifrac distance
+scaled_wUNI_nmds <- 
+  ordinate(
+    physeq = scaled_rooted_physeq,
+    method = "NMDS",
+    distance = "wunifrac")
+
+# Plot the PCoA
+wUNI_host_species_nmds <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_wUNI_nmds,
+    color = "host_species") +
+  geom_point(size=5, alpha = 0.5, aes(color = host_species)) +
+  scale_color_manual(values = c(host_species_colors)) + 
+  theme_bw() + labs(color = "host_species")
+wUNI_host_species_nmds
+
+wUNI_gut_section_nmds <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_wUNI_nmds,
+    color = "gut_section") +
+  geom_point(size=5, alpha = 0.5, aes(color = gut_section)) +
+  scale_color_manual(values = c(gut_section_colors)) + 
+  theme_bw() + labs(color = "gut_section")
+wUNI_gut_section_nmds
+
+wUNI_region_nmds <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_wUNI_nmds,
+    color = "region") +
+  geom_point(size=5, alpha = 0.5, aes(color = region)) +
+  scale_color_manual(values = c(region_colors)) + 
+  theme_bw() + labs(color = "region")
+wUNI_region_nmds
+
+wUNI_diet_nmds <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_wUNI_nmds,
+    color = "diet") +
+  geom_point(size=5, alpha = 0.5, aes(color = diet)) +
+  scale_color_manual(values = c(diet_colors)) + 
+  theme_bw() + labs(color = "diet")
+wUNI_diet_nmds
+
+wUNI_diet_gut_section_nmds <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_wUNI_nmds,
+    color = "diet",
+    shape = "gut_section") +
+  geom_point(size=5, alpha = 0.5, aes(color = diet)) +
+  scale_shape_manual(values = c(0,2,15,16,17,18)) +
+  scale_color_manual(values = c(diet_colors)) + 
+  theme_bw() + labs(color = "diet")
+wUNI_diet_gut_section_nmds
+
+wUNI_gut_section_diet_nmds <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_wUNI_nmds,
+    color = "gut_section",
+    shape = "diet") +
+  geom_point(size=5, alpha = 0.5, aes(color = gut_section)) +
+  scale_shape_manual(values = c(15,16,17)) +
+  scale_color_manual(values = c(gut_section_colors)) + 
+  theme_bw() + labs(color = "gut_section")
+wUNI_gut_section_diet_nmds
+
+wUNI_diet_region_nmds <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_wUNI_nmds,
+    color = "diet",
+    shape = "region") +
+  geom_point(size=5, alpha = 0.5, aes(color = diet)) +
+  scale_shape_manual(values = c(15,16,17,18,19)) +
+  scale_color_manual(values = c(diet_colors)) + 
+  theme_bw() + labs(color = "diet")
+wUNI_diet_region_nmds
+
+wUNI_region_diet_nmds <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_wUNI_nmds,
+    color = "region",
+    shape = "diet") +
+  geom_point(size=5, alpha = 0.5, aes(color = region)) +
+  scale_shape_manual(values = c(15,16,17,18)) +
+  scale_color_manual(values = c(region_colors)) + 
+  theme_bw() + labs(color = "region")
+wUNI_region_diet_nmds
+
+
+wUNI_host_species_diet_nmds <- 
+  plot_ordination(
+    physeq = scaled_rooted_physeq,
+    ordination = scaled_wUNI_nmds,
+    color = "host_species",
+    shape = "diet") +
+  geom_point(size=5, alpha = 0.5, aes(color = host_species)) +
+  scale_shape_manual(values = c(15, 16, 17, 18)) +
+  scale_color_manual(values = c(host_species_colors)) + 
+  theme_bw() + labs(color = "host_species")
+wUNI_host_species_diet_nmds
+
+```
+
+
+# Statistical Significance Testing 
+
+## PERMANOVA 
+```{r PERMANOVA}
+# Calculate all three of the distance matrices
+scaled_sorensen_dist <- phyloseq::distance(scaled_rooted_physeq, method = "bray", binary = TRUE)
+scaled_bray_dist <- phyloseq::distance(scaled_rooted_physeq, method = "bray")
+scaled_wUnifrac_dist <- phyloseq::distance(scaled_rooted_physeq, method = "wunifrac")
+
+# make a data frame from the sample_data
+# All distance matrices will be the same metadata because they 
+# originate from the same phyloseq object. 
+metadata <- data.frame(sample_data(scaled_rooted_physeq))
+
+# Adonis test
+# In this example we are testing the hypothesis that the five stations
+# that were collected have different centroids in the ordination space 
+# for each of the dissimilarity metrics, we are using a discrete variable 
+
+# diet
+adonis2(scaled_sorensen_dist ~ diet, data = metadata)
+adonis2(scaled_bray_dist ~ diet, data = metadata)
+adonis2(scaled_wUnifrac_dist ~ diet, data = metadata)
+
+# region
+adonis2(scaled_sorensen_dist ~ region, data = metadata)
+adonis2(scaled_bray_dist ~ region, data = metadata)
+adonis2(scaled_wUnifrac_dist ~ region, data = metadata)
+
+# gut section
+adonis2(scaled_sorensen_dist ~ gut_section, data = metadata) # 0.559
+adonis2(scaled_bray_dist ~ gut_section, data = metadata) # 0.0438
+adonis2(scaled_wUnifrac_dist ~ gut_section, data = metadata) # 0.809
+
+# host species
+adonis2(scaled_sorensen_dist ~ host_species, data = metadata)
+adonis2(scaled_bray_dist ~ host_species, data = metadata)
+adonis2(scaled_wUnifrac_dist ~ host_species, data = metadata)
+```
+
+Note that:  
+
+- R2 = the percent variation explained. 
+- F = the F-Statistic, which represents the importance value. 
+- Pr(>F) = the pvalue 
+
+```{r PERMANOVA-multiVariable}
+# We might also care about other variables
+# Here, we will add date and fraction as variables
+# multiplicative model ORDER MATTERS! 
+adonis2(scaled_wUnifrac_dist ~ diet * region, data = metadata)
+adonis2(scaled_wUnifrac_dist ~ diet * gut_section, data = metadata)
+adonis2(scaled_wUnifrac_dist ~ diet * host_species, data = metadata)
+```
+
+We can also run tests that include additive (+) or multipliciatve models, which include the interaction term between variables. 
+
+## BetaDispR
+
+The PERMANOVA is sensitive to variance/dispersion in the data. Therefore, we need to run a homogeneity of dispersion test to test for the sensitivity of our PERMANOVA results to variance. 
+```{r betadispR}
+# Homogeneity of Disperson test with beta dispr
+# Sorensen 
+beta_soren_diet <- betadisper(scaled_sorensen_dist, metadata$diet)
+permutest(beta_soren_diet)
+
+# Bray-curtis 
+beta_bray_diet <- betadisper(scaled_bray_dist, metadata$diet)
+permutest(beta_bray_diet)
+
+# Weighted Unifrac 
+weighted_unifrac_diet <- betadisper(scaled_wUnifrac_dist, metadata$diet)
+permutest(beta_bray_diet)
+```
+
+
+# Session Information
+# For Reproducibility
+```{r session-info}
+#Ensure reproducibility
+devtools::session_info()
+```
+ 
+
+

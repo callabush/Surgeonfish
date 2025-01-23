@@ -1,0 +1,228 @@
+---
+title: "BioDiversity"
+author: "Calla Bush St George"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    code_folding: show
+    theme: spacelab
+    highlight: pygments
+    keep_md: yes
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+      toc_depth: 3
+  keep_md: true  
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.align = "center",
+                      fig.path = "../figures/04_Biodiversity/",
+                      dev = "png", dpi = 200) 
+
+# send any figure output to this folder 
+
+```
+
+# Setting the Environment 
+
+### Set my seed
+```{r set seed}
+# Any number can be chose
+set.seed(567890)
+```
+
+## Load Libraries 
+```{r load-packages}
+
+pacman::p_load(tidyverse, devtools, patchwork, iNEXT, phyloseq,rstatix, ggpubr,
+               install = FALSE)
+```
+
+## Load in Data 
+```{r load-data}
+load("data/02_PreProcessing/raw_preprocessed_physeq.RData")
+raw_preprocessed_physeq
+
+# Intuition Check 
+min(sample_sums(raw_preprocessed_physeq))
+
+
+# Setting colors for gut sections 
+host_species_colors <- c(
+  "Acanthurus nigros" = "dodgerblue4",
+  "Acanthurus achilles" = "#FF5733",
+  "Acanthurus nigrofuscus" = "olivedrab",
+  "Acanthurus olivaceus" = "purple4",
+  "Acanthurus triostegus" = "maroon2",
+  "Ctenochaetus striatus" = "yellow2",
+  "Naso brevirostris" = "red2",
+  "Naso lituratus" = "royalblue",
+  "Naso tonganus" = "salmon2",
+  "Odax pullus" = "springgreen2",
+  "Zebrasoma flavescens" = "mediumorchid",
+  "Zebrasoma scopas" = "magenta",
+  "Zebrasoma velifer" = "goldenrod")
+
+# Make metadata dataframe
+metadata_df <-
+  raw_preprocessed_physeq %>%
+  sample_data() %>%
+  data.frame()
+
+```
+
+
+
+# Goals
+
+1. Calculate the Hill Diversity of the samples. 
+2. Evaluate the rarefaction curves. 
+3. Evaluate the Diversity values. 
+4. Makes notes of specific samples and their seq depth. 
+
+# Diversity Calculations with iNEXT 
+
+```{r calc-div}
+# prepare input data 
+iNEXT_input_df <- 
+  raw_preprocessed_physeq %>%
+  otu_table() %>%
+  data.frame()
+# Quick check
+dim(iNEXT_input_df)
+
+# Run iNEXT: Calculate the Hill Numbers 
+# Note that: Species in ROWS, Samples in COLUMNS 
+# Remember to set the seed! 
+#iNEXT_data <- iNEXT(iNEXT_input_df, 
+ #                  q = c(0,1,2), datatype = "abundance")
+
+# Save the file
+#save(iNEXT_data, file = "data/04_Biodiversity/iNEXT_data.RData")
+```
+
+# Evaluate the Diversity! 
+```{r load-div}
+load("data/04_Biodiversity/iNEXT_data.RData")
+str(iNEXT_data)
+typeof(iNEXT_data)
+```
+
+# Plot Diversity 
+```{r plot-rarefaction}
+# Prepare Colors 
+color_df <- 
+  iNEXT_input_df %>%
+  colnames() %>%
+  data.frame()
+# Check
+head(color_df)
+# Rename the column 
+colnames(color_df)[1] <- "names"
+# Check
+head(color_df)
+
+
+# Make a helper dataframe for plotting with colors 
+iNEXT_color_df <- 
+  color_df %>%
+  # Fix the names for merging
+  mutate(names = gsub(names, pattern = "[.]", replace = "-"),
+         names = gsub(names, pattern = "X",  replace = "")) %>%
+  # Merge with metadata
+  left_join(metadata_df, by = "names") %>%
+   #Merge with colors for plotting with ggiNEXT
+  left_join(y=data.frame(host_species_colors = host_species_colors,
+            host_species = names(host_species_colors)),
+            by = "host_species")
+```
+
+# Plot Rarefaction with `ggiNEXT`
+
+```{r ggiNEXT, fig.width=8, fig.height=3.5}
+# Plot rarefaction! 
+# rarefaction/extrapolation curve, type = 1 
+
+# Order q: 
+  # 0 = Richness/ Number of Total taxa
+  # 1 = Exponential Shannon / Number of "Common" taxa
+  # 2 = Inverse Simpson / Number of "Dominant" taxa 
+
+#ggiNEXT(iNEXT_data, type = 1, facet.var = "Order.q") + 
+#  facet_wrap(~Order.q, scales = "fixed") + 
+#  scale_color_manual(values = iNEXT_color_df$host_species_colors, guide = FALSE) + 
+ # scale_fill_manual(values = iNEXT_color_df$host_specie_colors, guide = FALSE) #+ 
+ # scale_shape_manual(values = base::rep(17, nsamples(raw_preprocessed_physeq)),
+   #                  guide = FALSE) +
+ # theme(legend.position = "none")
+```
+
+
+# Manually plot Diversity 
+
+## Rarefaction
+```{r iNEXT-manual}
+
+iNEXT_manual_df <- 
+  iNEXT_data$iNextEst$size_based %>%
+  dplyr::rename(names = Assemblage) %>%
+  # Fix the samples names 
+  mutate(names = gsub(names, pattern = "[.]", replace = "-"),
+         names = gsub(names, pattern = "X", replace = "")) %>%
+  # join with metadata 
+  left_join(., metadata_df, by = "names") %>%
+  # Add colors to data frame
+  left_join(., data.frame(host_species_colors = host_species_colors,
+                          host_species = names(host_species_colors)),
+            by = "host_species") 
+
+# Inspect 
+dim(iNEXT_manual_df)
+str(iNEXT_manual_df)
+
+# Plot it - Rarefaction Curve 
+iNEXT_manual_df %>%
+  # Filter out rows that are calcaulted by rarefaction from iNEXT
+  dplyr::filter(Method == "Extrapolation") %>%
+  # Make the actual rarefaction plot with 
+  # the # of sequences on the x-axis and diversity on the y-axis
+  # You can choose to pick one diversity value or plot all three 
+  ggplot(aes(x = m, y= qD, color = host_species, group = names)) + 
+  # line 
+  geom_line() + 
+  #geom_point() + 
+  # Challenge: Facet with gut section
+  facet_grid(Order.q~host_species, scales = "fixed") + 
+  scale_color_manual(values = host_species_colors) + 
+  theme(legend.position = "bottom")
+```
+
+
+# Diversity vs Gut Section 
+
+```{r div-vs-, fig.height=3.5, fig.width=6}
+
+iNEXT_manual_df %>%
+  dplyr::filter(Method == "Observed") %>%
+  ggplot(aes(x = host_species, y = qD)) + 
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  facet_wrap(.~Order.q, scales = "free") + 
+  geom_point(aes(color = host_species)) + 
+  stat_smooth() + 
+  labs(x = "Host species", y = "# of ASVs") + 
+  scale_color_manual(values = host_species_colors) + 
+  theme(legend.position = "bottom")
+
+```
+
+
+# Session Information 
+```{r session-info}
+# Ensure reproducibility 
+devtools::session_info()
+```
